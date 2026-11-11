@@ -1,6 +1,6 @@
-# Merchant integration and recovery
+# Legacy ICC checkout integration and recovery
 
-ICC SDK is an independent personal project for prototypes and sandbox integrations. The merchant checkout workflow does not implement a consumer shopping agent, Direct VIC v2, TAP verification, issuer authorization, capture, refunds, or chargeback handling. Choose the integrations appropriate to the merchant's role.
+ICC SDK is an independent personal project for prototypes and sandbox integrations. This guide describes the legacy completeApprovedCheckout helper. The new PurchasingAgent workflow and separate Direct VIC module are described in agents.md and direct-vic.md. The legacy helper does not implement TAP verification, issuer authorization, capture, refunds, or chargeback handling. Choose the integrations appropriate to the merchant's role.
 
 ## Boundaries and tenant identity
 

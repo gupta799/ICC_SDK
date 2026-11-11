@@ -1,111 +1,104 @@
 # ICC SDK
 
-Independent TypeScript merchant toolkit for Intelligent Commerce Connect prototypes and sandbox integrations. Handwritten checkout and catalog workflows sit above the generated API contracts.
+TypeScript purchasing-agent SDK with ICC checkout integration and a separate Direct VIC payment provider. Build a backend that prepares a purchase, enforces a spending policy, obtains approval and authentication, submits checkout, and recovers uncertain outcomes.
 
-This is a personal project, unaffiliated with Visa and not endorsed, sponsored, or certified by Visa. Visa and other product names belong to their respective owners.
+This is a personal project, unaffiliated with Visa and not endorsed, sponsored, or certified by Visa. It is intended for prototypes and sandbox integration development. Visa and other product names belong to their respective owners.
 
-## What is implemented
-
-- Approval tied to a detached checkout snapshot, quote revalidation, and readiness checks.
-- Durable PostgreSQL completion fences across workers and restarts, scoped idempotency keys, cached completion, and authoritative reconciliation.
-- Strict response validation, request validation, explicit pending states, and no automatic mutation retries.
-- Catalog ingestion and protocol syndication polling with deadlines, cancellation, and rejection handling.
-- An adapter tested against the actual CyberSource Node SDK `0.0.84`, including all 37 operation signatures and its HTTP response handling.
-- A dependency-free ESM runtime, TypeScript declarations, package consumer tests, and CI on Node 22.18/24 with PostgreSQL.
-
-ACP has the approved checkout workflow. UCP has typed create/get/update/cancel/complete helpers; its payloads and routes remain distinct. Direct VIC v2 and TAP cryptographic verification are outside this package.
-
-## Build and try it
+## Run a purchasing agent
 
 Node 22.18 or newer:
 
 ```sh
 npm ci
-npm run verify
-npm pack
+npm run demo:agent
 ```
 
-`npm run demo` runs a local checkout simulation: repeated completion calls return one recorded order. No payment is submitted. The package is named `@gupta799/icc-sdk`; registry publication is a separate release step. Install a locally packed tarball into your backend to evaluate it.
-
-## Complete an approved checkout
+The executable example exposes four model tools, purchases headphones, repeats the request without creating another order, and recovers a second purchase after its checkout response is lost. It uses an explicit local simulator with synthetic authentication and payment credentials. It contacts no Visa service and submits no real payments.
 
 ```ts
 import {
-  completeApprovedCheckout, PostgresAttemptStore,
-  postgresAttemptStoreSchema,
+  PurchasingAgent, InMemoryPurchaseStore,
+  createSimulatedCommerce, createPurchasingTools,
 } from '@gupta799/icc-sdk';
-import { Pool } from 'pg';
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-// Apply this once using your application's database migration process.
-await pool.query(postgresAttemptStoreSchema());
-const store = new PostgresAttemptStore(pool);
-
-const order = await completeApprovedCheckout({
-  client, // CommerceClient with configured official JWT/MLE API instances
-  store,
-  scope: 'merchant-account-1', // trusted, stable backend configuration
-  attemptId: 'order-attempt-42', // keep stable for this attempt
-  sessionId,
-  payment,
-  approve: async cart => approvalUI.confirm(cart), // must return literal true
+const commerce = createSimulatedCommerce();
+const agent = new PurchasingAgent({
+  merchants: [commerce.merchant],
+  payments: commerce.payments,
+  store: new InMemoryPurchaseStore(), // use PostgresPurchaseStore across production workers
 });
-```
-
-The workflow validates the session and payment, obtains approval, fetches the session again, and compares purchase fields. It atomically claims the session before submitting completion with a key derived from scope and attempt ID. A completion must match the approved purchase and contain an order identifier before being cached. The checkout server must still enforce the approved totals atomically: a final read cannot prevent subsequent changes on the server.
-
-Every worker for a merchant must share one durable database/table and stable scope. A new attempt ID cannot bypass an existing session claim. Claims have no automatic expiry or release. `InMemoryAttemptStore` is only for demos and tests. Low-level completion helpers require an idempotency key but do not provide the workflow's storage fence.
-
-## Recover an uncertain completion
-
-```ts
-import { reconcileCheckout, checkoutIdempotencyKey } from '@gupta799/icc-sdk';
-
-const order = await reconcileCheckout(store, scope, attemptId, async attempt => {
-  // Implement this with your authoritative merchant/PSP records and credentials.
-  // Match this trusted merchant, session, and derived key; never just a similar total.
-  return merchantOrders.findCompletedCheckout({
-    merchant: attempt.scope,
-    sessionId: attempt.sessionId,
-    idempotencyKey: checkoutIdempotencyKey(attempt.scope, attempt.id),
-  });
+const tools = createPurchasingTools({
+  agent,
+  scope: 'trusted-account',
+  customerId: 'authenticated-customer',
+  policy: {
+    allowedMerchantIds: [commerce.merchant.id], currency: 'USD',
+    maxTotalMinor: 10_000, maxQuantity: 2,
+    expiresAt: new Date(Date.now() + 300_000).toISOString(),
+  },
+  approve: async request => approvalUI.confirm(request.quote), // application-owned UI
+  authenticate: commerce.authenticate, // synthetic; replace with approved identity integration
 });
+
+const prepared = await tools.find(t => t.name === 'prepare_purchase')!.execute({
+  purchaseId: 'purchase-42', merchantId: commerce.merchant.id,
+  items: [{ id: 'headphones', quantity: 1 }],
+});
+// A model may request execution; it cannot supply approval, policy, identity or credentials.
+const completed = await tools.find(t => t.name === 'execute_purchase')!.execute({ purchaseId: 'purchase-42' });
 ```
 
-`undefined` leaves the attempt unresolved. It does not authorize resubmission. Reconciliation validates the response and approved financial/fulfillment fields before saving. Completion is monotonic: a late failure cannot erase a reconciled order, and callers return the persisted winning result. Processor lookup and order-to-checkout mapping remain application-specific.
+`approvalUI` belongs to your application. The complete runnable example is [examples/agent.ts](examples/agent.ts). The package name remains `@gupta799/icc-sdk`; it has not been published to npm. Run `npm pack` and install the resulting tarball into your backend.
 
-## Connect and operate
+## What the agent SDK does
 
-Follow the [official-client guide](docs/official-client.md) to configure dedicated API clients with approved sandbox JWT and required request/response MLE. It describes verified method/HTTP compatibility and a remaining upstream encryption failure issue that must be addressed before production use. Disable upstream payload logging and keep credentials and payment material in the backend.
+- Validates trusted merchant, customer, currency, per-purchase budget, quantities and expiry.
+- Separates quote preparation, application approval, provider authentication, credential issuance, merchant submission and provider confirmation.
+- Revalidates the quote around approval/authentication and before checkout.
+- Uses atomic, durable purchase/quote reservations and versioned execution claims across workers.
+- Preserves unknown outcomes without automatically retrying credential issuance or checkout.
+- Keeps credentials and authentication evidence outside durable records and model-facing tool results.
+- Reconciles through authoritative merchant/PSP lookup; preserves the first order identity and monotonically enriches payment status.
+- Tracks confirmation separately: an existing order remains completed even if its confirmation response is lost.
 
-See [durable storage](docs/postgres.md), [integration and recovery](docs/integration.md), [release verification](docs/RELEASING.md), and [contract provenance](CONTRACT.md).
+The first supported purchase mode obtains fresh application approval for each purchase. Policies are per purchase; this is not an aggregate budget ledger or recurring autonomous-spend service. The merchant server must enforce the approved quote atomically. Local revalidation cannot eliminate a server change after the final read.
 
-```ts
-await client.checkout.acp.get(sessionId);
-await client.checkout.acp.update(sessionId, updatedCart);
-await client.checkout.ucp.get(ucpSessionId);
-await client.merchant.get(merchantId);
-await client.call('getProduct', {}, { path: { product_id: productId } });
-await waitForCatalog(client, jobId, { protocols: ['acp'], timeoutMs: 60_000 });
-```
+## Choose the integrations
 
-All operations remain available through typed `client.call`. Results distinguish `success`, `action_required`, `accepted`, and `unverified`. Credential retrieval remains `unverified` because its published response wrapper is ambiguous. An operation's success or a retrieved credential does not establish issuer approval, capture, or successful order placement.
+| Component | Included | Application supplies |
+| --- | --- | --- |
+| Agent orchestration | `PurchasingAgent`, strict policy checks, state machine and recovery | Authenticated customer/tenant, approval experience and approved authentication service |
+| Agent tools | `prepare_purchase`, `execute_purchase`, `get_purchase`, `reconcile_purchase` descriptors | Function-calling/MCP host and tool routing; no model API key is needed for the local demo |
+| Merchant checkout | `ICCMerchantConnector` for outbound ACP checkout; connector interface | ICC-enabled account, configured official client, supported credential mapping and authoritative order lookup |
+| Visa payment provider | `VicClient`, `VicMtlsTransport`, `VicPaymentProvider` | Onboarding identifiers, enrolled token, certificates, fresh request signatures, request mappers and approved JWE/JWS verification/decryption |
+| Durable state | `PostgresPurchaseStore` and schema | Shared pool, database migration, access controls and operations |
+| Local development | `createSimulatedCommerce` with catalog, prices, inventory and single-use synthetic credentials | Nothing external; explicitly simulated |
 
-Strict response validation is the default and retains provider extension fields. `responseValidation: 'none'` is available for investigating sandbox contract discrepancies; approved checkout still validates its required responses. An invalid response after a write can mean the write already took effect. Use authoritative reconciliation before retrying.
+A Direct VIC credential is not automatically an ICC checkout token. The merchant connector's payment mapper must match the receiving merchant/PSP's approved credential format. The provider and merchant connector are separate responsibilities, not interchangeable payment calls.
 
-## Verification status
+Start with the [agent integration guide](docs/agents.md), [safe model tools](docs/agent-tools.md), [Direct VIC setup](docs/direct-vic.md), and [durable purchase storage](docs/purchase-storage.md).
 
-Tests include real PostgreSQL persistence/concurrency/recovery, actual official SDK classes with an offline network boundary, local workflow fixtures, and installation/type checking of the packed package. Run database tests with `TEST_DATABASE_URL` pointing at a disposable database; otherwise those tests are explicitly skipped.
+## Existing ICC APIs remain available
 
-No authenticated Visa sandbox request has been executed. Live JWT/MLE, approved response fixtures, participant entitlements, and merchant/PSP lifecycle integration remain release requirements before real payments. This repository's packaging and local integration checks do not establish Visa certification or production readiness. The owner must select a redistribution license before public package distribution; metadata currently says `UNLICENSED`.
+The existing `CommerceClient`, `OfficialClientTransport`, `completeApprovedCheckout`, and lower-level checkout/catalog helpers remain available. The captured contract has 37 ICC operations: agent and merchant registries/keys, ACP and UCP checkout, catalog operations, enrollment, purchase instructions, credentials and confirmations. Direct VIC has four separately handwritten v2 operations. This is not a claim of complete Visa ecosystem coverage.
 
-## Regenerate contracts
+See [official ICC transport](docs/official-client.md), [legacy checkout integration](docs/integration.md), [legacy attempt storage](docs/postgres.md), and [contract provenance](CONTRACT.md).
 
-Download the public source referenced in `CONTRACT.md`, then run:
+## Verification and live access
 
 ```sh
-python3 generate.py --spec /path/to/cybs_merged.json
-npm run verify
+TEST_DATABASE_URL=postgresql://... npm run verify
+npm pack
 ```
 
-The generator records the exact input hash and actual operation/path counts. Review changes and verify the input's origin before adopting a new contract.
+The full development test suite also requires Python 3 and OpenSSL; TLS tests generate temporary certificates outside the repository. Use a disposable database. Without `TEST_DATABASE_URL`, database tests are explicitly skipped. Tests cover real PostgreSQL concurrency/restart recovery, actual HTTP purchase/response-loss boundaries, local mutual TLS with client certificate authentication, official CyberSource compatibility, tool isolation, credential projection and packed-package installation/types. `npm run demo` retains the older checkout-only example; `npm run demo:agent` runs the agent workflow.
+
+No authenticated Visa sandbox request has been executed. Local TLS tests verify our transport against a local server, not Visa acceptance or cryptographic interoperability. Approved authentication/signing/JWE/JWS integration, participant entitlements, actual merchant credential compatibility and sandbox lifecycle verification are still required before live payments. The official CyberSource release also has an unresolved detached request-encryption failure path documented in its integration guide.
+
+The SDK implements no inbound merchant ACP/UCP HTTP server, TAP verification, issuer authorization interface, capture/refund/settlement engine, universal storefront access or product-search service. Use supported merchant connections and your existing discovery and payment systems.
+
+Licensing remains `UNLICENSED` pending the owner's choice. No registry publication or Visa certification is implied.
+
+## Contract regeneration
+
+Download the public source referenced in `CONTRACT.md`, then run `python3 generate.py --spec /path/to/cybs_merged.json`. Generation records the input hash and actual operation/path counts. Review its origin and contract changes before adoption. Direct VIC code is maintained separately and is not produced by this generator.

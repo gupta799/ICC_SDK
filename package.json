@@ -1,8 +1,8 @@
 {
   "name": "@gupta799/icc-sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
-  "description": "Independent developer toolkit for Intelligent Commerce Connect prototypes and sandbox integrations",
+  "description": "Independent TypeScript purchasing-agent SDK with ICC and Direct VIC integrations for prototypes and sandbox development",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -25,7 +25,9 @@
     "demo": "node --experimental-strip-types examples/checkout.ts",
     "test:package": "node scripts/package-smoke.mjs",
     "prepack": "npm run build && npm run check",
-    "verify": "npm test && npm run check && npm run demo && npm run test:package"
+    "verify": "npm test && npm run check && npm run demo && npm run demo:agent && npm run test:package",
+    "demo:agent": "node --experimental-strip-types examples/agent.ts",
+    "predemo:agent": "npm run build"
   },
   "engines": {
     "node": ">=22.18"
@@ -47,9 +49,10 @@
     "url": "https://github.com/gupta799/ICC_SDK/issues"
   },
   "keywords": [
+    "agentic-commerce",
+    "purchasing-agent",
     "icc",
-    "intelligent-commerce-connect",
-    "merchant",
+    "visa-intelligent-commerce",
     "checkout",
     "typescript"
   ],
