@@ -18,7 +18,7 @@
     "build": "tsc",
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "check": "tsc --noEmit",
-    "demo": "node --experimental-strip-types examples/demo.ts"
+    "demo": "node --experimental-strip-types examples/checkout.ts"
   },
   "engines": {
     "node": ">=22.18"

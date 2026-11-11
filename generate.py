@@ -24,7 +24,7 @@ for path,methods in s['paths'].items():
   responses={k:clean(x.get('schema',{})) for k,x in o['responses'].items() if k.startswith('2')}
   ops[n]={'method':method.upper(),'path':path,'body':clean(body) if body else None,'parameters':[{k:p[k] for k in ['name','in','required'] if k in p} for p in params],'responses':responses}
   types.append(json.dumps(n)+': { body: '+(ts(body) if body else 'undefined')+'; response: '+' | '.join(ts(x.get('schema',{})) for k,x in o['responses'].items() if k.startswith('2'))+' }')
-(r/'src/contracts.json').write_text(json.dumps(ops,indent=2))
-(r/'src/generated.ts').write_text('// Generated from the public ICC contract. Run python3 generate.py with the research snapshot available.\nexport interface Operations {\n'+';\n'.join(types)+'\n}\n')
+(r/'src/generated/contracts.json').write_text(json.dumps(ops,indent=2))
+(r/'src/generated/operations.ts').write_text('// Generated from the public ICC contract. Run python3 generate.py with the research snapshot available.\nexport interface Operations {\n'+';\n'.join(types)+'\n}\n')
 (r/'CONTRACT.md').write_text('Public ICC contract snapshot\n\nSource: https://developer.visaacceptance.com/api-reference-assets/specs/cybs_merged.json\n\nSnapshot SHA256: 52c1405a8294fe702f436dfdf87006f9adf7db5e633a322bc334ff1dd94edbac\n\n37 operations. Schemas contain public field constraints with vendor prose omitted. The credential response wrapper is ambiguous; credential retrieval returns unverified data requiring caller reconciliation. No automatic mutation retries. Direct VIC v2 and TAP verification are outside this initial package.\n')
 print('Generated',len(ops),'operations')

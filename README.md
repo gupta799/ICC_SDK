@@ -4,6 +4,39 @@ Independent TypeScript developer toolkit for Intelligent Commerce Connect protot
 
 This is a personal project. It is not an official Visa product and is not affiliated with, sponsored, endorsed, or certified by Visa. Visa and other product names are trademarks of their respective owners. Version 0.1.0 implements all 37 ICC operations through typed `client.call`, plus merchant, catalog and checkout helpers. This initial package excludes direct VIC v2 and TAP cryptographic verification.
 
+## Start with the handwritten implementation
+
+| File | Implementation |
+| --- | --- |
+| [src/workflows/checkout.ts](src/workflows/checkout.ts) | Approval tied to the cart, quote revalidation, atomic attempt claims, completion and reconciliation |
+| [src/workflows/catalog.ts](src/workflows/catalog.ts) | Feed processing, protocol syndication, rejection handling and cancellation |
+| [src/client.ts](src/client.ts) | Request dispatch, idempotency enforcement, error classification and result states |
+| [src/validation.ts](src/validation.ts) | Nested request checks and conditional merchant key validation |
+| [src/transports/official-client.ts](src/transports/official-client.ts) | Adapter to configured Visa/CyberSource API instances |
+| [test/workflows.test.ts](test/workflows.test.ts) | Tests of actual merchant workflow failure cases |
+
+`src/generated/` contains the API field definitions and schemas only. `src/index.ts` is the public entry point.
+
+## Complete a merchant checkout
+
+```ts
+import { completeApprovedCheckout } from '@gupta799/icc-sdk';
+
+const completed = await completeApprovedCheckout({
+  client,                       // configured CommerceClient
+  store: durableAttemptStore,   // implements AttemptStore with atomic claim
+  scope: 'merchant-account-1',
+  attemptId: 'order-attempt-42', // keep stable for this attempt
+  sessionId,
+  payment,
+  approve: async (cart) => approvalUI.confirm(cart),
+});
+```
+
+The workflow fetches the authoritative cart, obtains approval, fetches it again and compares purchase fields. A changed cart stops completion. An atomic claim prevents concurrent calls from submitting the same attempt. A lost response leaves an unresolved attempt; use `reconcileCheckout` with merchant/PSP lookup rather than submitting another order. Quote revalidation cannot eliminate a change occurring after its final read; the checkout server must enforce totals atomically. `InMemoryAttemptStore` is for demos/tests and does not survive restarts. Persisted completion results may contain personal order data; apply the application's access and retention policy.
+
+Use `waitForCatalog(client, jobId, { protocols: ['acp'] })` to wait for both ingestion and requested protocol syndication. A feed with rejected records is not returned as ready.
+
 ## Run
 
 Node 22.18 or newer:
@@ -15,7 +48,7 @@ npm test
 npm run demo
 ```
 
-The demo runs locally and submits no payments. `dist` is included in the source archive; runtime has no dependencies. The build requires TypeScript. Types are generated from the public contract described in CONTRACT.md.
+The demo runs locally and submits no payments. `dist` is produced by the build; runtime has no dependencies. The build requires TypeScript. Types are generated from the public contract described in CONTRACT.md.
 
 ## Merchant checkout
 
