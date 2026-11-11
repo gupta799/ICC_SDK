@@ -1,0 +1,30 @@
+{
+  "name": "@gupta799/icc-sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Independent developer toolkit for Intelligent Commerce Connect prototypes and sandbox integrations",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CONTRACT.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "check": "tsc --noEmit",
+    "demo": "node --experimental-strip-types examples/demo.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "@types/node": "^24.0.0"
+  }
+}
