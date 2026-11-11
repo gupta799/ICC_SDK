@@ -4,8 +4,9 @@ import { CommerceClient, InMemoryAttemptStore, completeApprovedCheckout } from '
 const cart = {
   id: 'session_demo', status: 'ready_for_payment', currency: 'USD',
   line_items: [{ id: 'mug', quantity: 1 }],
-  totals: [{ type: 'total', amount: 1500 }],
-  fulfillment_options: [], messages: [], links: [],
+  totals: [{ type: 'total', display_text: 'Total', amount: 1500 }],
+  buyer: { first_name: 'Demo', email: 'demo@example.com' },
+  fulfillment_option_id: 'digital', fulfillment_options: [], messages: [], links: [],
 };
 let ordersPlaced = 0;
 const client = new CommerceClient({ transport: {

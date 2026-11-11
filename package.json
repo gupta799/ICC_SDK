@@ -1,6 +1,6 @@
 {
   "name": "@gupta799/icc-sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Independent developer toolkit for Intelligent Commerce Connect prototypes and sandbox integrations",
   "exports": {
@@ -12,19 +12,46 @@
   "files": [
     "dist",
     "README.md",
-    "CONTRACT.md"
+    "CONTRACT.md",
+    "docs"
   ],
   "scripts": {
-    "build": "tsc",
+    "clean": "node scripts/clean.mjs",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.check.json",
+    "pretest": "npm run build",
     "test": "node --experimental-strip-types --test test/*.test.ts",
-    "check": "tsc --noEmit",
-    "demo": "node --experimental-strip-types examples/checkout.ts"
+    "predemo": "npm run build",
+    "demo": "node --experimental-strip-types examples/checkout.ts",
+    "test:package": "node scripts/package-smoke.mjs",
+    "prepack": "npm run build && npm run check",
+    "verify": "npm test && npm run check && npm run demo && npm run test:package"
   },
   "engines": {
     "node": ">=22.18"
   },
   "devDependencies": {
-    "typescript": "^5.9.3",
-    "@types/node": "^24.0.0"
-  }
+    "@types/node": "^24.0.0",
+    "@types/pg": "8.23.1",
+    "cybersource-rest-client": "0.0.84",
+    "pg": "8.23.1",
+    "typescript": "^5.9.3"
+  },
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gupta799/ICC_SDK.git"
+  },
+  "homepage": "https://github.com/gupta799/ICC_SDK#readme",
+  "bugs": {
+    "url": "https://github.com/gupta799/ICC_SDK/issues"
+  },
+  "keywords": [
+    "icc",
+    "intelligent-commerce-connect",
+    "merchant",
+    "checkout",
+    "typescript"
+  ],
+  "sideEffects": false
 }

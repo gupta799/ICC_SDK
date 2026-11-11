@@ -4,13 +4,11 @@ import { CommerceClient, completeApprovedCheckout, InMemoryAttemptStore,
   CartChangedError, UnknownOutcomeError, reconcileCheckout, waitForCatalog, FeedFailedError,
   AttemptConflictError } from '../dist/index.js';
 
-const cart = {id:'s1',status:'ready_for_payment',currency:'USD',line_items:[],totals:[{type:'total',amount:1000}],fulfillment_options:[],messages:[],links:[]};
-const order = {...cart,status:'completed'};
-const payment = {payment_data:{token:'opaque',provider:'test'}};
+import { cart, order, payment } from './fixtures.ts';
 function fixture(change=false, lose=false) {
   let reads=0, writes=0;
   const client=new CommerceClient({transport:{async send(r) {
-    if(r.operation==='getCheckoutSession') return {status:200,body:{...cart,totals:[{type:'total',amount:change&&reads++>0?2000:1000}]}};
+    if(r.operation==='getCheckoutSession') return {status:200,body:{...cart,totals:[{type:'total',display_text:'Total',amount:change&&reads++>0?2000:1000}]}};
     writes++;
     if(lose) throw Error('connection lost');
     return {status:200,body:order};

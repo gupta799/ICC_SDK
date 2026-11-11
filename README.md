@@ -1,96 +1,111 @@
 # ICC SDK
 
-Independent TypeScript developer toolkit for Intelligent Commerce Connect prototypes and sandbox integrations.
+Independent TypeScript merchant toolkit for Intelligent Commerce Connect prototypes and sandbox integrations. Handwritten checkout and catalog workflows sit above the generated API contracts.
 
-This is a personal project. It is not an official Visa product and is not affiliated with, sponsored, endorsed, or certified by Visa. Visa and other product names are trademarks of their respective owners. Version 0.1.0 implements all 37 ICC operations through typed `client.call`, plus merchant, catalog and checkout helpers. This initial package excludes direct VIC v2 and TAP cryptographic verification.
+This is a personal project, unaffiliated with Visa and not endorsed, sponsored, or certified by Visa. Visa and other product names belong to their respective owners.
 
-## Start with the handwritten implementation
+## What is implemented
 
-| File | Implementation |
-| --- | --- |
-| [src/workflows/checkout.ts](src/workflows/checkout.ts) | Approval tied to the cart, quote revalidation, atomic attempt claims, completion and reconciliation |
-| [src/workflows/catalog.ts](src/workflows/catalog.ts) | Feed processing, protocol syndication, rejection handling and cancellation |
-| [src/client.ts](src/client.ts) | Request dispatch, idempotency enforcement, error classification and result states |
-| [src/validation.ts](src/validation.ts) | Nested request checks and conditional merchant key validation |
-| [src/transports/official-client.ts](src/transports/official-client.ts) | Adapter to configured Visa/CyberSource API instances |
-| [test/workflows.test.ts](test/workflows.test.ts) | Tests of actual merchant workflow failure cases |
+- Approval tied to a detached checkout snapshot, quote revalidation, and readiness checks.
+- Durable PostgreSQL completion fences across workers and restarts, scoped idempotency keys, cached completion, and authoritative reconciliation.
+- Strict response validation, request validation, explicit pending states, and no automatic mutation retries.
+- Catalog ingestion and protocol syndication polling with deadlines, cancellation, and rejection handling.
+- An adapter tested against the actual CyberSource Node SDK `0.0.84`, including all 37 operation signatures and its HTTP response handling.
+- A dependency-free ESM runtime, TypeScript declarations, package consumer tests, and CI on Node 22.18/24 with PostgreSQL.
 
-`src/generated/` contains the API field definitions and schemas only. `src/index.ts` is the public entry point.
+ACP has the approved checkout workflow. UCP has typed create/get/update/cancel/complete helpers; its payloads and routes remain distinct. Direct VIC v2 and TAP cryptographic verification are outside this package.
 
-## Complete a merchant checkout
-
-```ts
-import { completeApprovedCheckout } from '@gupta799/icc-sdk';
-
-const completed = await completeApprovedCheckout({
-  client,                       // configured CommerceClient
-  store: durableAttemptStore,   // implements AttemptStore with atomic claim
-  scope: 'merchant-account-1',
-  attemptId: 'order-attempt-42', // keep stable for this attempt
-  sessionId,
-  payment,
-  approve: async (cart) => approvalUI.confirm(cart),
-});
-```
-
-The workflow fetches the authoritative cart, obtains approval, fetches it again and compares purchase fields. A changed cart stops completion. An atomic claim prevents concurrent calls from submitting the same attempt. A lost response leaves an unresolved attempt; use `reconcileCheckout` with merchant/PSP lookup rather than submitting another order. Quote revalidation cannot eliminate a change occurring after its final read; the checkout server must enforce totals atomically. `InMemoryAttemptStore` is for demos/tests and does not survive restarts. Persisted completion results may contain personal order data; apply the application's access and retention policy.
-
-Use `waitForCatalog(client, jobId, { protocols: ['acp'] })` to wait for both ingestion and requested protocol syndication. A feed with rejected records is not returned as ready.
-
-## Run
+## Build and try it
 
 Node 22.18 or newer:
 
 ```sh
 npm ci
-npm run build
-npm test
-npm run demo
+npm run verify
+npm pack
 ```
 
-The demo runs locally and submits no payments. `dist` is produced by the build; runtime has no dependencies. The build requires TypeScript. Types are generated from the public contract described in CONTRACT.md.
+`npm run demo` runs a local checkout simulation: repeated completion calls return one recorded order. No payment is submitted. The package is named `@gupta799/icc-sdk`; registry publication is a separate release step. Install a locally packed tarball into your backend to evaluate it.
 
-## Merchant checkout
+## Complete an approved checkout
 
 ```ts
-import { CommerceClient, OfficialClientTransport } from '@gupta799/icc-sdk';
-// Configure official API instances with dedicated ApiClients, JWT and mandatory
-// request/response MLE. Store secrets in your backend's secret manager.
-const client = new CommerceClient({
-  transport: new OfficialClientTransport({
-    createCheckoutSession: configuredACPApi,
-    completeCheckout: configuredACPApi,
-    registerMerchant: configuredMerchantRegistryApi,
-  }),
+import {
+  completeApprovedCheckout, PostgresAttemptStore,
+  postgresAttemptStoreSchema,
+} from '@gupta799/icc-sdk';
+import { Pool } from 'pg';
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// Apply this once using your application's database migration process.
+await pool.query(postgresAttemptStoreSchema());
+const store = new PostgresAttemptStore(pool);
+
+const order = await completeApprovedCheckout({
+  client, // CommerceClient with configured official JWT/MLE API instances
+  store,
+  scope: 'merchant-account-1', // trusted, stable backend configuration
+  attemptId: 'order-attempt-42', // keep stable for this attempt
+  sessionId,
+  payment,
+  approve: async cart => approvalUI.confirm(cart), // must return literal true
 });
-const session = await client.checkout.acp.create({
-  items: [{ id: 'sku_blue_mug', quantity: 1 }],
-});
-// Fetch and confirm authoritative totals before requesting payment approval.
 ```
 
-Use the official `cybersource-rest-client` package's API classes such as `ACPCheckoutApi`, `UCPCheckoutApi`, `MerchantRegistrationApi`, `ProductFeedApi`, `PurchaseIntentApi`, and `PaymentEventsApi`. Construct each with your sandbox configuration and a dedicated `new CyberSource.ApiClient()` as its second argument. Map every operation you use to its configured API instance. Never share the default singleton client between tenants. Follow current Visa onboarding guidance for the JWT/MLE configuration; this package does not invent credentials, encryption, or certificate settings.
+The workflow validates the session and payment, obtains approval, fetches the session again, and compares purchase fields. It atomically claims the session before submitting completion with a key derived from scope and attempt ID. A completion must match the approved purchase and contain an order identifier before being cached. The checkout server must still enforce the approved totals atomically: a final read cannot prevent subsequent changes on the server.
 
-## Other operations
+Every worker for a merchant must share one durable database/table and stable scope. A new attempt ID cannot bypass an existing session claim. Claims have no automatic expiry or release. `InMemoryAttemptStore` is only for demos and tests. Low-level completion helpers require an idempotency key but do not provide the workflow's storage fence.
+
+## Recover an uncertain completion
 
 ```ts
-await client.call('getMerchant', undefined, {path: {merchantId}});
-await client.call('updateCheckoutSession', updatedCart, {path: {session_id}});
-await client.catalog.status(jobId);
+import { reconcileCheckout, checkoutIdempotencyKey } from '@gupta799/icc-sdk';
+
+const order = await reconcileCheckout(store, scope, attemptId, async attempt => {
+  // Implement this with your authoritative merchant/PSP records and credentials.
+  // Match this trusted merchant, session, and derived key; never just a similar total.
+  return merchantOrders.findCompletedCheckout({
+    merchant: attempt.scope,
+    sessionId: attempt.sessionId,
+    idempotencyKey: checkoutIdempotencyKey(attempt.scope, attempt.id),
+  });
+});
 ```
 
-`Operations` exports the generated request and response types. Requests are validated before transport. Completion requires a stable caller-generated idempotency key. The same key must be reused after an uncertain completion; do not generate a new key on retry.
+`undefined` leaves the attempt unresolved. It does not authorize resubmission. Reconciliation validates the response and approved financial/fulfillment fields before saving. Completion is monotonic: a late failure cannot erase a reconciled order, and callers return the persisted winning result. Processor lookup and order-to-checkout mapping remain application-specific.
 
-Results distinguish `success`, `action_required`, `accepted` and `unverified`. `accepted` catalog jobs still need processing/syndication checks. A credential retrieval returns `unverified` because the published wrapper shape is ambiguous; obtain approved sandbox fixtures before consuming it. `success` describes the API operation, never an issuer authorization guarantee. Responses retain provider data; optional and unexpected response fields are not discarded.
+## Connect and operate
 
-Transport exceptions on writes become `UnknownOutcomeError`. No writes are automatically retried. Reconcile the order or transaction with the authoritative merchant/PSP before retrying. HTTP failures become `ApiError`; sensitive response bodies are not placed in error messages. The optional evidence sink records only operation/status/outcome metadata. Sink delivery is best effort and must be monitored by the application. Durable dispute evidence remains the application's responsibility.
+Follow the [official-client guide](docs/official-client.md) to configure dedicated API clients with approved sandbox JWT and required request/response MLE. It describes verified method/HTTP compatibility and a remaining upstream encryption failure issue that must be addressed before production use. Disable upstream payload logging and keep credentials and payment material in the backend.
 
-The adapter supports a pre-dispatch AbortSignal check; the official callback client does not expose cancellation of in-flight requests here. Apply network timeouts in the configured official client. Do not use this package as a browser library or expose payment material to an LLM. Authentication, participant approval, merchant entitlement, issuer support, certification, payment capture/refund adapters and live end-to-end testing remain integration work.
+See [durable storage](docs/postgres.md), [integration and recovery](docs/integration.md), [release verification](docs/RELEASING.md), and [contract provenance](CONTRACT.md).
 
-## Validation status
+```ts
+await client.checkout.acp.get(sessionId);
+await client.checkout.acp.update(sessionId, updatedCart);
+await client.checkout.ucp.get(ucpSessionId);
+await client.merchant.get(merchantId);
+await client.call('getProduct', {}, { path: { product_id: productId } });
+await waitForCatalog(client, jobId, { protocols: ['acp'], timeoutMs: 60_000 });
+```
 
-Unit tests exercise nested request validation, route differences, idempotency, unknown outcomes, tenant routing, official-client argument mapping, pending states and audit failures. No authenticated Visa sandbox request has been executed. Keep the SDK in sandbox until the supported configurations have passed integration testing.
+All operations remain available through typed `client.call`. Results distinguish `success`, `action_required`, `accepted`, and `unverified`. Credential retrieval remains `unverified` because its published response wrapper is ambiguous. An operation's success or a retrieved credential does not establish issuer approval, capture, or successful order placement.
+
+Strict response validation is the default and retains provider extension fields. `responseValidation: 'none'` is available for investigating sandbox contract discrepancies; approved checkout still validates its required responses. An invalid response after a write can mean the write already took effect. Use authoritative reconciliation before retrying.
+
+## Verification status
+
+Tests include real PostgreSQL persistence/concurrency/recovery, actual official SDK classes with an offline network boundary, local workflow fixtures, and installation/type checking of the packed package. Run database tests with `TEST_DATABASE_URL` pointing at a disposable database; otherwise those tests are explicitly skipped.
+
+No authenticated Visa sandbox request has been executed. Live JWT/MLE, approved response fixtures, participant entitlements, and merchant/PSP lifecycle integration remain release requirements before real payments. This repository's packaging and local integration checks do not establish Visa certification or production readiness. The owner must select a redistribution license before public package distribution; metadata currently says `UNLICENSED`.
 
 ## Regenerate contracts
 
-Download the public source JSON linked in CONTRACT.md, then run `python3 generate.py --spec /path/to/cybs_merged.json` and rebuild. Review contract differences before updating a deployed SDK.
+Download the public source referenced in `CONTRACT.md`, then run:
+
+```sh
+python3 generate.py --spec /path/to/cybs_merged.json
+npm run verify
+```
+
+The generator records the exact input hash and actual operation/path counts. Review changes and verify the input's origin before adopting a new contract.

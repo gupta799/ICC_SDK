@@ -35,6 +35,8 @@ export interface Result<T> {
     kind: 'success' | 'action_required' | 'accepted' | 'unverified';
     status: number;
     data: T;
+    /** Provider headers only. Never includes transport request or credential objects. */
+    headers?: Record<string, string>;
 }
 export class ValidationError extends Error {
     constructor(public issues: string[]) { super(issues.join('; ')); this.name = 'ValidationError'; }
@@ -44,4 +46,15 @@ export class ApiError extends Error {
 }
 export class UnknownOutcomeError extends Error {
     constructor(public operation: Operation) { super(`Outcome unknown for ${operation}; reconcile before retrying`); this.name = 'UnknownOutcomeError'; }
+}
+/** The adapter can prove the request was not dispatched. Fix configuration before retrying. */
+export class TransportConfigurationError extends Error {
+    constructor(message: string) { super(message); this.name = 'TransportConfigurationError'; }
+}
+/** A successful HTTP response did not match the pinned contract. Writes may have taken effect. */
+export class ResponseValidationError extends Error {
+    constructor(public operation: Operation, public status: number, public issues: string[]) {
+        super(`Invalid ICC response for ${operation} (${status})`);
+        this.name = 'ResponseValidationError';
+    }
 }

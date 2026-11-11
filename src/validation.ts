@@ -1,6 +1,6 @@
 import contracts from './generated/contracts.json' with { type: 'json' };
 import { ValidationError, type Operation } from './types.js';
-type Schema = {
+export type Schema = {
     type?: string;
     properties?: Record<string, Schema>;
     required?: string[];
@@ -14,14 +14,15 @@ type Schema = {
     maximum?: number;
     pattern?: string;
     allOf?: Schema[];
+    additionalProperties?: Schema | boolean;
 };
-function validate(s: Schema, value: unknown, path = '$', issues: string[] = []): string[] {
+export function validateSchema(s: Schema, value: unknown, path = '$', issues: string[] = []): string[] {
     if (s.allOf)
         for (const part of s.allOf)
-            validate(part, value, path, issues);
+            validateSchema(part, value, path, issues);
     if (s.enum && !s.enum.includes(value))
         issues.push(`${path}: unsupported value`);
-    const type = s.type;
+    const type = s.type ?? (s.properties || s.required || s.additionalProperties !== undefined ? 'object' : undefined);
     if (type === 'object') {
         if (!value || typeof value !== 'object' || Array.isArray(value)) {
             issues.push(`${path}: expected object`);
@@ -29,11 +30,19 @@ function validate(s: Schema, value: unknown, path = '$', issues: string[] = []):
         }
         const v = value as Record<string, unknown>;
         for (const key of s.required ?? [])
-            if (v[key] === undefined)
+            if (!Object.prototype.hasOwnProperty.call(v, key) || v[key] === undefined)
                 issues.push(`${path}.${key}: required`);
         for (const [key, sub] of Object.entries(s.properties ?? {}))
-            if (v[key] !== undefined)
-                validate(sub, v[key], `${path}.${key}`, issues);
+            if (Object.prototype.hasOwnProperty.call(v, key) && v[key] !== undefined)
+                validateSchema(sub, v[key], `${path}.${key}`, issues);
+        for (const key of Object.keys(v)) {
+            if (Object.prototype.hasOwnProperty.call(s.properties ?? {}, key))
+                continue;
+            if (s.additionalProperties === false)
+                issues.push(`${path}.${key}: unexpected property`);
+            else if (s.additionalProperties && typeof s.additionalProperties === 'object')
+                validateSchema(s.additionalProperties, v[key], `${path}.${key}`, issues);
+        }
     }
     else if (type === 'array') {
         if (!Array.isArray(value)) {
@@ -43,7 +52,7 @@ function validate(s: Schema, value: unknown, path = '$', issues: string[] = []):
         if (value.length < (s.minItems ?? 0) || value.length > (s.maxItems ?? Infinity))
             issues.push(`${path}: invalid array size`);
         if (s.items)
-            value.forEach((v, i) => validate(s.items!, v, `${path}[${i}]`, issues));
+            value.forEach((v, i) => validateSchema(s.items!, v, `${path}[${i}]`, issues));
     }
     else if (type === 'string') {
         if (typeof value !== 'string') {
@@ -73,7 +82,7 @@ function validate(s: Schema, value: unknown, path = '$', issues: string[] = []):
 export function validateRequest(operation: Operation, body: unknown): void {
     const schema = contracts[operation].body;
     if (schema) {
-        const errors = validate(schema as Schema, body);
+        const errors = validateSchema(schema as Schema, body);
         if (errors.length)
             throw new ValidationError(errors);
     }
